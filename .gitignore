@@ -119,6 +119,7 @@ project/plugins/project/
 .cache
 .lib/
 .bsp
+.idea
 
 ### Scala ###
 *.class
