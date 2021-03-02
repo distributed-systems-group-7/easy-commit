@@ -120,6 +120,7 @@ project/plugins/project/
 .lib/
 .bsp
 .idea
+null
 
 ### Scala ###
 *.class
