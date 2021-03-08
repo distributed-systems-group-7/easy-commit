@@ -4,7 +4,7 @@ import org.scalatest.Matchers
 
 import scala.concurrent.Promise
 
-class HttpVerticleSpec extends VerticleTesting[HttpVerticle] with Matchers {
+class DatabaseVerticleSpec extends VerticleTesting[DatabaseVerticle] with Matchers {
 
   "HttpVerticle" should "bind to 8666 and answer with 'world'" in {
     val promise = Promise[String]

@@ -14,4 +14,5 @@ libraryDependencies ++= Vector (
   Library.vertx_codegen
 )
 
+libraryDependencies += "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.9.0"
 
