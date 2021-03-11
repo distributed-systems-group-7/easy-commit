@@ -2,6 +2,7 @@ package l.tudelft.distribted.ec.protocols
 
 import io.vertx.core.AsyncResult
 import io.vertx.core.buffer.Buffer
+import io.vertx.core.json.Json
 import io.vertx.scala.core.Vertx
 import io.vertx.scala.core.eventbus.Message
 import l.tudelft.distribted.ec.HashMapDatabase
@@ -35,7 +36,7 @@ class TwoPhaseCommit(
   private val states: mutable.Map[String, ProtocolState] = new mutable.HashMap[String, ProtocolState]()
 
   override def requestTransaction(transaction: Transaction): Unit = {
-    val numberOfCohorts = network.size
+    val numberOfCohorts = network.size - 1
     var numberOfCommits = 0
     var numberOfCommitAcks = 0
     var numberOfAbortAcks = 0
@@ -57,6 +58,7 @@ class TwoPhaseCommit(
                       numberOfCommitAcks += 1
                       if (numberOfCommitAcks == numberOfCohorts) {
                         states += ((transactionId, ProtocolState.CLOSED))
+                        println("Coordinator done.")
                       }
                   }
                 }
@@ -76,6 +78,7 @@ class TwoPhaseCommit(
                     numberOfAbortAcks += 1
                     if (numberOfAbortAcks == numberOfCohorts) {
                       states += ((transactionId, ProtocolState.CLOSED))
+                      println("Coordinator abort.")
                     }
                 }
               }
@@ -96,21 +99,23 @@ class TwoPhaseCommit(
         try {
           states += ((transaction.id, ProtocolState.READY))
           performTransaction(transaction)
-          sendToCohort(VoteCommitMessage(address, transaction.id))
+          message.reply(Json.encodeToBuffer(VoteCommitMessage(address, transaction.id)))
         } catch {
           case _ =>
             states += ((transaction.id, ProtocolState.ABORT))
-            sendToCohort(VoteAbortMessage(address, transaction.id))
+            message.reply(Json.encodeToBuffer(VoteAbortMessage(address, transaction.id)))
         }
 
       case GlobalCommitMessage(sender, transactionId, _) =>
         states += ((transactionId, ProtocolState.COMMIT))
-        sendToCohort(GlobalCommitAckMessage(address, transactionId))
+        message.reply(Json.encodeToBuffer(GlobalCommitAckMessage(address, transactionId)))
+        println("Cohort done.")
 
       case GlobalAbortMessage(sender, transactionId, _) =>
         states += ((transactionId, ProtocolState.ABORT))
         // TODO revert possibly already performed transactions
-        sendToCohort(GlobalAbortAckMessage(address, transactionId))
+        message.reply(Json.encodeToBuffer(GlobalAbortAckMessage(address, transactionId)))
+        println("Cohort abort.")
     }
   }
 }
