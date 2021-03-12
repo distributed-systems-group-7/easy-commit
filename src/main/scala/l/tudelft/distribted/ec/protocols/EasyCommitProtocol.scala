@@ -11,14 +11,21 @@ import scala.collection.mutable
 
 abstract case class SupervisorState() extends Transaction
 
-// Tracks from which cohorts this supervisor has received a READY response
+// State of supervisor in which it is counting how many agents agreed with the transaction.
 case class ReceivingReadyState(id: String, receivedAddresses: mutable.HashSet[String]) extends Transaction
 
+// State of cohort after receiving a PREPARE message and deciding to be ready
 case class ReadyState(id: String) extends Transaction
+
+// State of cohort or supervisor after having decided what should be done
+case class CommitDecidedState(id: String) extends Transaction
+case class AbortDecidedState(id: String) extends Transaction
+
+// State of cohort or supervisor after having done what was decided
 case class CommittedState(id: String) extends Transaction
 case class AbortedState(id: String) extends Transaction
 
-
+//TODO add timeouts
 class EasyCommitProtocol(
     private val vertx: Vertx,
     private val address: String,
@@ -41,7 +48,7 @@ class EasyCommitProtocol(
       // TODO perhaps do something with the old transaction? Queue?
     }
 
-    stateManager.createState(transaction.id, address);
+    stateManager.createState(transaction.id, address, ReceivingReadyState(transaction.id, mutable.HashSet()))
     sendToCohort(TransactionPrepareRequest(address, transaction.id))
   }
 
@@ -83,12 +90,12 @@ class EasyCommitProtocol(
 
     //TODO check if this change is possible
     val ready = true
-    stateManager.createState(id, sender)
     if (ready) {
       // Remember the READY response is being sent to the supervisor
+      stateManager.createState(id, sender, ReadyState(id))
       sendToAddress(sender, TransactionReadyResponse(sender, id))
     } else {
-      stateManager.updateState(id, AbortedState(id))
+      stateManager.createState(id, sender, AbortedState(id))
       sendToAddress(sender, TransactionAbortResponse(address, id))
     }
   }
@@ -115,7 +122,7 @@ class EasyCommitProtocol(
     }
 
     stateManager.getState(id) match {
-      case ReceivingReadyState(_, confirmedAddresses) => {
+      case ReceivingReadyState(_, confirmedAddresses) =>
         confirmedAddresses += sender
 
         // TODO check if network.size is in- or excluding this node
@@ -125,14 +132,11 @@ class EasyCommitProtocol(
         }
 
         // Global decision has been made, transfer commit decision to all cohorts
-        sendToCohort(TransactionCommitRequest(address, id))
-        stateManager.updateState(id, CommittedState(id))
-      }
-      case _ => {
+        commitTransaction(id)
+      case _ =>
         // A READY was received by the supervisor, but the supervisor is not expecting it.
         // Drop the package.
         // TODO log that a wrong package was received
-      }
     }
   }
 
@@ -155,7 +159,9 @@ class EasyCommitProtocol(
     if (supervisor == address || supervisor == sender) {
       // This agent is the supervisor of this transaction, or the message was from the supervisor
       // Update everyone else, and stop tracking this.
+      stateManager.updateState(id, AbortDecidedState(id))
       sendToCohort(TransactionAbortResponse(address, id))
+      // TODO abort the transaction in the DB
       stateManager.updateState(id, AbortedState(id))
     }
     // Else the abort came from an agent who sent the message for redundancy
@@ -166,8 +172,8 @@ class EasyCommitProtocol(
    * If this message is from the supervisor, repeat the message to everyone
    * and update the database.
    *
-   * @param sender
-   * @param id
+   * @param sender the sender of the commit request.
+   * @param id the id of the transaction the commit was about.
    */
   def handleCommitRequest(sender: String, id: String): Unit = {
     if (!stateManager.stateExists(id)) {
@@ -175,12 +181,25 @@ class EasyCommitProtocol(
       //TODO log that a malicious package was found
       return
     }
-    val supervisor = stateManager.getSupervisor(id)
-    if (supervisor == sender) {
-      stateManager.updateState(id, CommittedState(id))
-      sendToCohort(TransactionCommitRequest(address, id))
-      // TODO update the DB
+
+    val state = stateManager.getState(id)
+    if (state != ReadyState(id)) {
+      // This state is not yet in the ready state.
+      //TODO log that a malicious package was found.
+      return
     }
+
+    val supervisor = stateManager.getSupervisor(id)
+    if (supervisor == sender && supervisor != address) {
+      commitTransaction(id)
+    }
+  }
+
+  def commitTransaction(id: String): Unit = {
+    stateManager.updateState(id, CommitDecidedState(id))
+    sendToCohort(TransactionCommitRequest(address, id))
+    //TODO commit the DB change
+    stateManager.updateState(id, CommittedState(id))
   }
 
 }
@@ -200,21 +219,12 @@ class TransactionStateManager (private val address: String){
 
   /**
    * Create a new state to track the state of a transaction.
-   * If the address is equal to the address of the creator of this manager,
-   * a `ReceivingReadyState` will be created as state, indicating this agent is listening for READY messages.
-   * If the address is unequal, then a `ReadyState` will be created,
-   * indicating this agent has responded to a PREPARE message from a supervisor.
-   *
    * @param id the id of the transaction to track.
    * @param supervisor the network address of the supervisor.
    */
-  def createState(id: String, supervisor: String): Unit = {
+  def createState(id: String, supervisor: String, state: Transaction): Unit = {
     supervisorMap.put(id, supervisor)
-    if (supervisor == address) {
-      stateMap.put(id, ReceivingReadyState(id, 0))
-    } else {
-      stateMap.put(id, ReadyState(id))
-    }
+    stateMap.put(id, state)
   }
 
   /**
@@ -224,18 +234,10 @@ class TransactionStateManager (private val address: String){
    * @param state the new state of the transaction.
    */
   def updateState(id: String, state: Transaction): Unit = {
+    if (!stateExists(id)) {
+      throw new IllegalStateException("Cannot add a state when it was not created.")
+    }
     stateMap.put(id, state)
-  }
-
-  /**
-   * Stop tracking some state.
-   * For example if committed or aborted.
-   * TODO can be deleted when we change to an actual log.
-   * @param id representing the transaction to delete.
-   */
-  def removeState(id: String): Unit = {
-    supervisorMap.remove(id)
-    stateMap.remove(id)
   }
 
   /**
