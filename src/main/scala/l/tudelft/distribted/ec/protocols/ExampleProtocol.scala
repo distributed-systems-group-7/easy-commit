@@ -17,6 +17,9 @@ class ExampleProtocol(
                        private val timeout: Long = 5000L,
                        private val network: mutable.Map[String, NetworkState] = new mutable.HashMap[String, NetworkState]()
                      ) extends Protocol(vertx, address, database, timeout, network) {
+
+
+
   override def requestTransaction(transaction: Transaction): Unit = {
     performTransaction(transaction)
     sendToCohort(PerformTransactionMessage(address, transaction))

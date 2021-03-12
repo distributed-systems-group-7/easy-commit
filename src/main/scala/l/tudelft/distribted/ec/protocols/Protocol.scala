@@ -8,7 +8,7 @@ import io.vertx.core.{AsyncResult, Handler}
 import io.vertx.lang.scala.json.JsonObject
 import io.vertx.scala.core.Vertx
 import io.vertx.scala.core.eventbus.{DeliveryOptions, EventBus, Message}
-import l.tudelft.distribted.ec.HashMapDatabase
+import l.tudelft.distribted.ec.{HashMapDatabase, protocols}
 import l.tudelft.distribted.ec.protocols.NetworkState.{NetworkState, READY}
 
 import scala.collection.mutable
@@ -28,7 +28,7 @@ case class StoreDataTransaction(id: String, keyToStore: String, data: java.util.
 
 object NetworkState extends Enumeration {
   type NetworkState = Value
-  val READY = Value
+  val READY: protocols.NetworkState.Value = Value
 }
 
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
@@ -36,10 +36,12 @@ object NetworkState extends Enumeration {
   new Type(value = classOf[RequestNetwork], name = "request.network"),
   new Type(value = classOf[RespondNetwork], name = "response.network"),
   new Type(value = classOf[PerformTransactionMessage], name = "protocol.example"),
+  new Type(value = classOf[TransactionPrepareRequest], name = "request.prepare"),
+  new Type(value = classOf[TransactionReadyResponse], name = "request.prepare"),
+  new Type(value = classOf[TransactionAbortResponse], name = "request.abort"),
 ))
 trait ProtocolMessage {
-  def sender: String;
-
+  def sender: String
   def `type`: String
 }
 
@@ -47,6 +49,11 @@ trait ProtocolMessage {
 case class RequestNetwork(sender: String, state: NetworkState, `type`: String = "request.network") extends ProtocolMessage
 
 case class RespondNetwork(sender: String, state: NetworkState, `type`: String = "response.network") extends ProtocolMessage
+
+case class TransactionPrepareRequest(sender: String, id: String, `type`: String = "request.prepare") extends ProtocolMessage
+case class TransactionReadyResponse(sender: String, id: String, `type`: String = "response.prepare") extends ProtocolMessage
+case class TransactionAbortResponse(sender: String, id: String, `type`: String = "response.abort") extends ProtocolMessage
+case class TransactionCommitRequest(sender: String, id: String, `type`: String = "request.commit") extends ProtocolMessage
 
 abstract class Protocol(
                          private val vertx: Vertx,
@@ -61,10 +68,16 @@ abstract class Protocol(
 
   network.put(address, READY)
 
+
+
   def listen(): Unit = {
-    eventBus.consumer(COMMIT_PROTOCOL_ADDRESS, handler = (message: Message[Buffer]) => {
+    eventBus.consumer(COMMIT_PROTOCOL_ADDRESS, handler = (message: Message[Buffer]) =>
       onMessageReceived(message, message.body().toJsonObject.mapTo(classOf[ProtocolMessage]))
-    })
+    )
+
+    eventBus.consumer(address, handler = (message: Message[Buffer]) =>
+      onMessageReceived(message, message.body().toJsonObject.mapTo(classOf[ProtocolMessage]))
+    )
 
     // perform a heart beat every second
     vertx.setPeriodic(1000L, _ => {
@@ -92,6 +105,10 @@ abstract class Protocol(
 
   def sendToCohort(messageToSend: ProtocolMessage): Unit = {
     eventBus.send(COMMIT_PROTOCOL_ADDRESS, Json.encodeToBuffer(messageToSend))
+  }
+
+  def sendToAddress(address: String, messageToSend: ProtocolMessage): Unit = {
+    eventBus.send(address, Json.encodeToBuffer(messageToSend))
   }
 
   def requestTransaction(transaction: Transaction)
