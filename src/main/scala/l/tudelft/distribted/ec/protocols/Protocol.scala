@@ -39,6 +39,7 @@ object NetworkState extends Enumeration {
   new Type(value = classOf[TransactionPrepareRequest], name = "request.prepare"),
   new Type(value = classOf[TransactionReadyResponse], name = "request.prepare"),
   new Type(value = classOf[TransactionAbortResponse], name = "request.abort"),
+  new Type(value = classOf[TransactionCommitRequest], name = "request.commit"),
 ))
 trait ProtocolMessage {
   def sender: String
