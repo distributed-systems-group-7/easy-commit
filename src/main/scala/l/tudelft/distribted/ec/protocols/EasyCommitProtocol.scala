@@ -49,7 +49,17 @@ class EasyCommitProtocol(
     }
 
     stateManager.createState(transaction.id, address, ReceivingReadyState(transaction.id, mutable.HashSet()))
-    sendToCohort(TransactionPrepareRequest(address, transaction.id))
+    sendToCohortExpectingReply(TransactionPrepareRequest(address, transaction.id), reply => {
+      if (reply.succeeded()) {
+        reply.result().body().toJsonObject.mapTo(classOf[ProtocolMessage]) match {
+          case TransactionReadyResponse(sender, id, _) => handleReadyResponse(reply.result(), sender, id)
+          case TransactionAbortResponse(sender, id, _) => handleAbortResponse(reply.result(), sender, id)
+          case _ => // TODO ABORT
+        }
+      } else {
+        // TODO Time-out or other failure
+      }
+    })
   }
 
   /**
@@ -63,10 +73,9 @@ class EasyCommitProtocol(
    * @param protocolMessage parsed message, matched to one of its subclasses.
    */
   override def handleProtocolMessage(message: Message[Buffer], protocolMessage: ProtocolMessage): Unit = protocolMessage match {
-    case TransactionPrepareRequest(sender, id, _) => handlePrepareRequest(sender, id)
-    case TransactionReadyResponse(sender, id, _) => handleReadyResponse(sender, id)
-    case TransactionAbortResponse(sender, id, _) => handleAbortResponse(sender, id)
-    case TransactionCommitRequest(sender, id, _) => handleCommitRequest(sender, id)
+    case TransactionPrepareRequest(sender, id, _) => handlePrepareRequest(message, sender, id)
+    case TransactionAbortResponse(sender, id, _) => handleAbortResponse(message, sender, id)
+    case TransactionCommitRequest(sender, id, _) => handleCommitRequest(message, sender, id)
   }
 
   /**
@@ -75,7 +84,7 @@ class EasyCommitProtocol(
    * @param sender the network address of the sender of this message.
    * @param id the id of the transaction to prepare for.
    */
-  def handlePrepareRequest(sender: String, id: String): Unit = {
+  def handlePrepareRequest(message: Message[Buffer], sender: String, id: String): Unit = {
     if (stateManager.stateExists(id)) {
       val supervisor = stateManager.getSupervisor(id)
       if (sender != supervisor) {
@@ -93,10 +102,10 @@ class EasyCommitProtocol(
     if (ready) {
       // Remember the READY response is being sent to the supervisor
       stateManager.createState(id, sender, ReadyState(id))
-      sendToAddress(sender, TransactionReadyResponse(sender, id))
+      replyToMessage(message, TransactionReadyResponse(sender, id))
     } else {
       stateManager.createState(id, sender, AbortedState(id))
-      sendToAddress(sender, TransactionAbortResponse(address, id))
+      replyToMessage(message, TransactionAbortResponse(address, id))
     }
   }
 
@@ -109,7 +118,7 @@ class EasyCommitProtocol(
    * @param sender the network address of the sender of this message.
    * @param id the id of the transaction the sender sent READY for.
    */
-  def handleReadyResponse(sender: String, id: String): Unit = {
+  def handleReadyResponse(message: Message[Buffer], sender: String, id: String): Unit = {
     if (!stateManager.stateExists(id)) {
       // Probably supervised this earlier but was deleted due to an abort
       return
@@ -148,7 +157,7 @@ class EasyCommitProtocol(
    * @param sender the sender of the ABORT message.
    * @param id the transaction the ABORT message was sent about.
    */
-  def handleAbortResponse(sender: String, id: String): Unit = {
+  def handleAbortResponse(message: Message[Buffer], sender: String, id: String): Unit = {
     if (!stateManager.stateExists(id)) {
       // No state with this id, so abort what?
       //TODO log that a malicious package was found.
@@ -175,7 +184,7 @@ class EasyCommitProtocol(
    * @param sender the sender of the commit request.
    * @param id the id of the transaction the commit was about.
    */
-  def handleCommitRequest(sender: String, id: String): Unit = {
+  def handleCommitRequest(message: Message[Buffer], sender: String, id: String): Unit = {
     if (!stateManager.stateExists(id)) {
       // No state with this id, so do not respond.
       //TODO log that a malicious package was found

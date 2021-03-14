@@ -43,6 +43,7 @@ object NetworkState extends Enumeration {
 ))
 trait ProtocolMessage {
   def sender: String
+
   def `type`: String
 }
 
@@ -52,8 +53,11 @@ case class RequestNetwork(sender: String, state: NetworkState, `type`: String = 
 case class RespondNetwork(sender: String, state: NetworkState, `type`: String = "response.network") extends ProtocolMessage
 
 case class TransactionPrepareRequest(sender: String, id: String, `type`: String = "request.prepare") extends ProtocolMessage
+
 case class TransactionReadyResponse(sender: String, id: String, `type`: String = "response.prepare") extends ProtocolMessage
+
 case class TransactionAbortResponse(sender: String, id: String, `type`: String = "response.abort") extends ProtocolMessage
+
 case class TransactionCommitRequest(sender: String, id: String, `type`: String = "request.commit") extends ProtocolMessage
 
 abstract class Protocol(
@@ -68,7 +72,6 @@ abstract class Protocol(
   private val eventBus: EventBus = vertx.eventBus()
 
   network.put(address, READY)
-
 
 
   def listen(): Unit = {
@@ -106,6 +109,10 @@ abstract class Protocol(
 
   def sendToCohort(messageToSend: ProtocolMessage): Unit = {
     eventBus.send(COMMIT_PROTOCOL_ADDRESS, Json.encodeToBuffer(messageToSend))
+  }
+
+  def replyToMessage(message: Message[Buffer], messageToSend: ProtocolMessage): Unit = {
+    message.reply(Json.encode(messageToSend))
   }
 
   def sendToAddress(address: String, messageToSend: ProtocolMessage): Unit = {
