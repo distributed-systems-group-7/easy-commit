@@ -8,36 +8,25 @@ import io.vertx.scala.core.eventbus.Message
 import l.tudelft.distribted.ec.HashMapDatabase
 import l.tudelft.distribted.ec.protocols.NetworkState.NetworkState
 import l.tudelft.distribted.ec.protocols.ProtocolState.ProtocolState
+import l.tudelft.distribted.ec.protocols.{PrepareTransactionMessage,VoteCommitMessage,VoteAbortMessage,GlobalCommitMessage,GlobalAbortMessage,GlobalCommitAckMessage,GlobalAbortAckMessage}
 
 import scala.collection.mutable
 
-case class PrepareTransactionMessage(sender: String, transaction: Transaction, `type`:String = "protocol.twophasecommit.prepare") extends ProtocolMessage()
+case class GlobalPreCommitMessage(sender: String, transactionId: String, `type`:String = "protocol.threephasecommit.globalprecommit") extends ProtocolMessage()
+case class GlobalPreCommitAckMessage(sender: String, transactionId: String, `type`:String = "protocol.threephasecommit.globalprecommitack") extends ProtocolMessage()
 
-case class VoteCommitMessage(sender: String, transactionId: String, `type`:String = "protocol.twophasecommit.votecommit") extends ProtocolMessage()
-
-case class VoteAbortMessage(sender: String, transactionId: String, `type`:String = "protocol.twophasecommit.voteabort") extends ProtocolMessage()
-
-case class GlobalCommitMessage(sender: String, transactionId: String, `type`:String = "protocol.twophasecommit.globalcommit") extends ProtocolMessage()
-
-case class GlobalAbortMessage(sender: String, transactionId: String, `type`:String = "protocol.twophasecommit.globalabort") extends ProtocolMessage()
-
-case class GlobalCommitAckMessage(sender: String, transactionId: String, `type`:String = "protocol.twophasecommit.globalcommitack") extends ProtocolMessage()
-
-case class GlobalAbortAckMessage(sender: String, transactionId: String, `type`:String = "protocol.twophasecommit.globalabortack") extends ProtocolMessage()
-
-class TwoPhaseCommit(
-                       private val vertx: Vertx,
-                       private val address: String,
-                       private val database: HashMapDatabase,
-                       private val timeout: Long = 5000L,
-                       private val network: mutable.Map[String, NetworkState] = new mutable.HashMap[String, NetworkState]()
-                     ) extends Protocol(vertx, address, database, timeout, network) {
+  class ThreePhaseCommit(
+                      private val vertx: Vertx,
+                      private val address: String,
+                      private val database: HashMapDatabase,
+                      private val timeout: Long = 5000L,
+                      private val network: mutable.Map[String, NetworkState] = new mutable.HashMap[String, NetworkState]()
+                    ) extends Protocol(vertx, address, database, timeout, network) {
 
   private val states: mutable.Map[String, ProtocolState] = new mutable.HashMap[String, ProtocolState]()
 
   override def requestTransaction(transaction: Transaction): Unit = {
     val numberOfCohorts = network.size - 1
-
     var numberOfCommits = 0
     var numberOfCommitAcks = 0
     var numberOfAbortAcks = 0
@@ -45,7 +34,6 @@ class TwoPhaseCommit(
 
     states += ((transaction.id, ProtocolState.INITIAL))
     performTransaction(transaction)
-
     sendToCohortExpectingReply(PrepareTransactionMessage(address, transaction), (response: AsyncResult[Message[Buffer]]) => {
       if (response.succeeded()) {
         response.result().body().toJsonObject.mapTo(classOf[ProtocolMessage]) match {
@@ -66,41 +54,44 @@ class TwoPhaseCommit(
                       }
                   }
                 }
-                else if (response.failed()) {
-                  abortFlag = true
-                  println("Commit acknoledgement failed.")
-                }
               })
             }
 
           case VoteAbortMessage(sender, transactionId, _) =>
-            abortFlag = true
-            println("Commit aborted.")
+            states += ((transactionId, ProtocolState.ABORT))
+            sendToCohortExpectingReply(GlobalAbortMessage(address, transactionId), (response: AsyncResult[Message[Buffer]]) => {
+              if (response.succeeded()) {
+                response.result().body().toJsonObject.mapTo(classOf[ProtocolMessage]) match {
+
+                  case GlobalAbortAckMessage(sender, transactionId, _) =>
+                    numberOfAbortAcks += 1
+                    if (numberOfAbortAcks == numberOfCohorts) {
+                      states += ((transactionId, ProtocolState.CLOSED))
+                      println("Coordinator abort.")
+                    }
+                }
+              }
+            })
+
         }
       }
       else if (response.failed()) {
-        abortFlag = true
-        println("Initiate commit failed.")
+        states += ((transaction.id, ProtocolState.ABORT))
+        sendToCohortExpectingReply(GlobalAbortMessage(address, transaction.id), (response: AsyncResult[Message[Buffer]]) => {
+          if (response.succeeded()) {
+            response.result().body().toJsonObject.mapTo(classOf[ProtocolMessage]) match {
+
+              case GlobalAbortAckMessage(sender, transactionId, _) =>
+                numberOfAbortAcks += 1
+                if (numberOfAbortAcks == numberOfCohorts) {
+                  states += ((transactionId, ProtocolState.CLOSED))
+                  println("Coordinator abort.")
+                }
+            }
+          }
+        })
       }
     })
-
-    if (abortFlag) {
-      states += ((transaction.id, ProtocolState.ABORT))
-      sendToCohortExpectingReply(GlobalAbortMessage(address, transaction.id), (response: AsyncResult[Message[Buffer]]) => {
-        if (response.succeeded()) {
-          response.result().body().toJsonObject.mapTo(classOf[ProtocolMessage]) match {
-
-            case GlobalAbortAckMessage(sender, transactionId, _) =>
-              numberOfAbortAcks += 1
-              if (numberOfAbortAcks == numberOfCohorts) {
-                states += ((transactionId, ProtocolState.CLOSED))
-                println("Coordinator abort.")
-              }
-          }
-        }
-      })
-    }
-
   }
 
   override def handleProtocolMessage(message: Message[Buffer], protocolMessage: ProtocolMessage): Unit = {
@@ -130,4 +121,7 @@ class TwoPhaseCommit(
     }
   }
 
+  def handleAbort(): Unit = {
+
+  }
 }

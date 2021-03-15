@@ -48,6 +48,12 @@ object ProtocolState extends Enumeration {
   new Type(value = classOf[GlobalAbortMessage], name = "protocol.twophasecommit.globalabort"),
   new Type(value = classOf[GlobalCommitAckMessage], name = "protocol.twophasecommit.globalcommitack"),
   new Type(value = classOf[GlobalAbortAckMessage], name = "protocol.twophasecommit.globalabortack"),
+  new Type(value = classOf[VoteCommitMessage], name = "protocol.threephasecommit.votecommit"),
+  new Type(value = classOf[VoteAbortMessage], name = "protocol.threephasecommit.voteabort"),
+  new Type(value = classOf[GlobalCommitMessage], name = "protocol.threephasecommit.globalcommit"),
+  new Type(value = classOf[GlobalAbortMessage], name = "protocol.threephasecommit.globalabort"),
+  new Type(value = classOf[GlobalCommitAckMessage], name = "protocol.threephasecommit.globalcommitack"),
+  new Type(value = classOf[GlobalAbortAckMessage], name = "protocol.threephasecommit.globalabortack"),
 ))
 trait ProtocolMessage {
   def sender: String
