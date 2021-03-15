@@ -83,16 +83,13 @@ abstract class Protocol(
     eventBus.consumer(COMMIT_PROTOCOL_ADDRESS, handler = (message: Message[Buffer]) => {
       onMessageReceived(message, message.body().toJsonObject.mapTo(classOf[ProtocolMessage]))
     })
+    eventBus.consumer(address, handler = (message: Message[Buffer]) => {
+      onMessageReceived(message, message.body().toJsonObject.mapTo(classOf[ProtocolMessage]))
+    })
 
     // perform a heart beat every second
     vertx.setPeriodic(1000L, _ => {
-      sendToCohortExpectingReply(RequestNetwork(address, network(address)), (response: AsyncResult[Message[Buffer]]) => {
-        if (response.succeeded()) {
-          response.result().body().toJsonObject.mapTo(classOf[RespondNetwork]) match {
-            case RespondNetwork(sender, state, _) => network.put(sender, state)
-          }
-        }
-      })
+      sendToCohort(RequestNetwork(address, network(address)))
     })
   }
 
@@ -105,11 +102,13 @@ abstract class Protocol(
 
 
   def sendToCohortExpectingReply[T](messageToSend: ProtocolMessage, handler: Handler[AsyncResult[Message[Buffer]]]): Unit = {
-    eventBus.send(COMMIT_PROTOCOL_ADDRESS, Json.encodeToBuffer(messageToSend), deliveryOptions, handler)
+    network.keySet.filter(cohort => cohort != address).foreach(cohort => {
+      eventBus.send(cohort, Json.encodeToBuffer(messageToSend), deliveryOptions, handler)
+    })
   }
 
   def sendToCohort(messageToSend: ProtocolMessage): Unit = {
-    eventBus.send(COMMIT_PROTOCOL_ADDRESS, Json.encodeToBuffer(messageToSend))
+    eventBus.publish(COMMIT_PROTOCOL_ADDRESS, Json.encodeToBuffer(messageToSend))
   }
 
   def requestTransaction(transaction: Transaction)
@@ -118,8 +117,7 @@ abstract class Protocol(
 
   def onMessageReceived(message: Message[Buffer], protocolMessage: ProtocolMessage): Unit = {
     (protocolMessage, message.replyAddress()) match {
-      case (RequestNetwork(sender, state, _), Some(_)) =>
-        message.reply(Json.encodeToBuffer(RespondNetwork(address, network(address))))
+      case (RequestNetwork(sender, state, _), None) =>
         network.put(sender, state)
       case _ => handleProtocolMessage(message, protocolMessage)
     }
