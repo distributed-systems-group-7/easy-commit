@@ -19,7 +19,7 @@ import scala.collection.mutable
   new Type(value = classOf[StoreDataTransaction], name = "transaction.store"),
 ))
 trait Transaction {
-  def id: String;
+  def id: String
 }
 
 case class RemoveDataTransaction(id: String, keyToRemove: String, `type`: String = "transaction.remove") extends Transaction
