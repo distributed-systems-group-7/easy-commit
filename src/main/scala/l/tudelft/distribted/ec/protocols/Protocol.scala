@@ -19,7 +19,7 @@ import scala.collection.mutable
   new Type(value = classOf[StoreDataTransaction], name = "transaction.store"),
 ))
 trait Transaction {
-  def id: String;
+  def id: String
 }
 
 case class RemoveDataTransaction(id: String, keyToRemove: String, `type`: String = "transaction.remove") extends Transaction
@@ -31,14 +31,32 @@ object NetworkState extends Enumeration {
   val READY = Value
 }
 
+object ProtocolState extends Enumeration {
+  type ProtocolState = Value
+  val INITIAL, WAIT, READY, ABORT, COMMIT, CLOSED = Value
+}
+
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
 @JsonSubTypes(Array(
   new Type(value = classOf[RequestNetwork], name = "request.network"),
   new Type(value = classOf[RespondNetwork], name = "response.network"),
   new Type(value = classOf[PerformTransactionMessage], name = "protocol.example"),
+  new Type(value = classOf[PrepareTransactionMessage], name = "protocol.twophasecommit.prepare"),
+  new Type(value = classOf[VoteCommitMessage], name = "protocol.twophasecommit.votecommit"),
+  new Type(value = classOf[VoteAbortMessage], name = "protocol.twophasecommit.voteabort"),
+  new Type(value = classOf[GlobalCommitMessage], name = "protocol.twophasecommit.globalcommit"),
+  new Type(value = classOf[GlobalAbortMessage], name = "protocol.twophasecommit.globalabort"),
+  new Type(value = classOf[GlobalCommitAckMessage], name = "protocol.twophasecommit.globalcommitack"),
+  new Type(value = classOf[GlobalAbortAckMessage], name = "protocol.twophasecommit.globalabortack"),
+  new Type(value = classOf[VoteCommitMessage], name = "protocol.threephasecommit.votecommit"),
+  new Type(value = classOf[VoteAbortMessage], name = "protocol.threephasecommit.voteabort"),
+  new Type(value = classOf[GlobalCommitMessage], name = "protocol.threephasecommit.globalcommit"),
+  new Type(value = classOf[GlobalAbortMessage], name = "protocol.threephasecommit.globalabort"),
+  new Type(value = classOf[GlobalCommitAckMessage], name = "protocol.threephasecommit.globalcommitack"),
+  new Type(value = classOf[GlobalAbortAckMessage], name = "protocol.threephasecommit.globalabortack"),
 ))
 trait ProtocolMessage {
-  def sender: String;
+  def sender: String
 
   def `type`: String
 }
