@@ -33,7 +33,7 @@ object NetworkState extends Enumeration {
 
 object ProtocolState extends Enumeration {
   type ProtocolState = Value
-  val INITIAL, WAIT, READY, ABORT, COMMIT, CLOSED = Value
+  val INITIAL, WAIT, READY, ABORT, COMMIT, PRECOMMIT, CLOSED = Value
 }
 
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
@@ -54,6 +54,8 @@ object ProtocolState extends Enumeration {
   new Type(value = classOf[GlobalAbortMessage], name = "protocol.threephasecommit.globalabort"),
   new Type(value = classOf[GlobalCommitAckMessage], name = "protocol.threephasecommit.globalcommitack"),
   new Type(value = classOf[GlobalAbortAckMessage], name = "protocol.threephasecommit.globalabortack"),
+  new Type(value = classOf[GlobalPreCommitMessage], name = "protocol.threephasecommit.globalprecommit"),
+  new Type(value = classOf[GlobalPreCommitAckMessage], name = "protocol.threephasecommit.globalprecommitack"),
 ))
 trait ProtocolMessage {
   def sender: String
