@@ -84,7 +84,12 @@ case class TransactionPreCommitResponse(sender: String, id: String, `type`: Stri
       }
     }
 
-
+    /**
+     * Handles the precommit procedure on the coordinator.
+     * The decision is communicated to the cohorts expecting a reply.
+     *
+     * @param id the id of the transaction entering PRECOMMIT state.
+     */
     def preCommitTransaction(id: String): Unit = {
       // In this case this node is the supervisor
       if (stateManager.stateExists(id)) {
@@ -104,6 +109,16 @@ case class TransactionPreCommitResponse(sender: String, id: String, `type`: Stri
       })
     }
 
+    /**
+     * Handles the case that a PRECOMMIT package was sent to this agent.
+     * Function only acts on this if this agent thinks it is the supervisor for this transaction.
+     * If the number of PRECOMMITS's received from distinct senders
+     * is equal to the number of agents in the network, this supervisor will commit.
+     *
+     * @param message raw form of the message that was sent. Used to directly reply.
+     * @param sender the network address of the sender of this message.
+     * @param id the id of the transaction the sender sent PRECOMMIT for.
+     */
     def handlePreCommitResponse(message: Message[Buffer], sender: String, id: String): Unit = {
       if (!stateManager.stateExists(id)) {
         // Probably supervised this earlier but was deleted due to an abort
@@ -163,7 +178,5 @@ case class TransactionPreCommitResponse(sender: String, id: String, `type`: Stri
         message.reply(TransactionPreCommitResponse(address, id))
       }
     }
-
-
 
   }
