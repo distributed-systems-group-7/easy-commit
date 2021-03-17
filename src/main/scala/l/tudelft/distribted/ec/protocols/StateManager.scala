@@ -8,11 +8,13 @@ trait PhaseState {
 
 // State of supervisor in which it is counting how many agents agreed with the transaction.
 case class ReceivingReadyState(id: String, receivedAddresses: mutable.HashSet[String]) extends PhaseState
+case class ReceivingPrecommitState(id: String, receivedAddresses: mutable.HashSet[String]) extends PhaseState
 
 // State of cohort after receiving a PREPARE message and deciding to be ready
 case class ReadyState(id: String) extends PhaseState
 
 // State of cohort or supervisor after having decided what should be done
+case class PreCommitDecidedState(id: String) extends PhaseState
 case class CommitDecidedState(id: String) extends PhaseState
 case class AbortDecidedState(id: String) extends PhaseState
 

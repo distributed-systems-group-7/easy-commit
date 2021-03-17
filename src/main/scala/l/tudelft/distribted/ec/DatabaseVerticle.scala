@@ -8,7 +8,7 @@ import io.vertx.core.json.Json
 import io.vertx.ext.web.handler.sockjs.impl.JsonCodec
 import io.vertx.lang.scala.json.JsonObject
 import io.vertx.scala.ext.web.handler.BodyHandler
-import l.tudelft.distribted.ec.protocols.{ExampleProtocol, TwoPhaseCommit, ThreePhaseCommit, RemoveDataTransaction, RequestNetwork, StoreDataTransaction}
+import l.tudelft.distribted.ec.protocols.{TwoPhaseCommit, ThreePhaseCommit, RemoveDataTransaction, RequestNetwork, StoreDataTransaction}
 
 import java.util.UUID
 import scala.concurrent.Future
@@ -22,7 +22,7 @@ class DatabaseVerticle(val name: String, val port: Int) extends ScalaVerticle {
     val database = new HashMapDatabase()
     Json.mapper.registerModule(DefaultScalaModule)
 
-    val protocol = new ThreePhaseCommit(
+    val protocol = new TwoPhaseCommit(
       vertx,
       name,
       database

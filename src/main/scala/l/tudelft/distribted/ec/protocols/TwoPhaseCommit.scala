@@ -11,8 +11,23 @@ import scala.collection.mutable
 
 abstract case class SupervisorState() extends Transaction
 
+case class PrepareTransactionMessage(sender: String, transaction: Transaction, `type`:String = "protocol.twophasecommit.prepare") extends ProtocolMessage()
+
+case class VoteCommitMessage(sender: String, transactionId: String, `type`:String = "protocol.twophasecommit.votecommit") extends ProtocolMessage()
+
+case class VoteAbortMessage(sender: String, transactionId: String, `type`:String = "protocol.twophasecommit.voteabort") extends ProtocolMessage()
+
+case class GlobalCommitMessage(sender: String, transactionId: String, `type`:String = "protocol.twophasecommit.globalcommit") extends ProtocolMessage()
+
+case class GlobalAbortMessage(sender: String, transactionId: String, `type`:String = "protocol.twophasecommit.globalabort") extends ProtocolMessage()
+
+case class GlobalCommitAckMessage(sender: String, transactionId: String, `type`:String = "protocol.twophasecommit.globalcommitack") extends ProtocolMessage()
+
+case class GlobalAbortAckMessage(sender: String, transactionId: String, `type`:String = "protocol.twophasecommit.globalabortack") extends ProtocolMessage()
+
+
 //TODO add timeouts
-abstract class TwoPhaseCommit (
+class TwoPhaseCommit (
                           private val vertx: Vertx,
                           private val address: String,
                           private val database: HashMapDatabase,

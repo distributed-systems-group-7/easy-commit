@@ -12,8 +12,9 @@ import l.tudelft.distribted.ec.protocols.{PrepareTransactionMessage,VoteCommitMe
 
 import scala.collection.mutable
 
-case class GlobalPreCommitMessage(sender: String, transactionId: String, `type`:String = "protocol.threephasecommit.globalprecommit") extends ProtocolMessage()
-case class GlobalPreCommitAckMessage(sender: String, transactionId: String, `type`:String = "protocol.threephasecommit.globalprecommitack") extends ProtocolMessage()
+case class TransactionPreCommitRequest(sender: String, id: String, `type`: String="request.precommit") extends ProtocolMessage
+
+case class TransactionPreCommitResponse(sender: String, id: String, `type`: String="response.precommit") extends ProtocolMessage
 
   class ThreePhaseCommit(
                       private val vertx: Vertx,
@@ -21,128 +22,148 @@ case class GlobalPreCommitAckMessage(sender: String, transactionId: String, `typ
                       private val database: HashMapDatabase,
                       private val timeout: Long = 5000L,
                       private val network: mutable.Map[String, NetworkState] = new mutable.HashMap[String, NetworkState]()
-                    ) extends Protocol(vertx, address, database, timeout, network) {
+                    ) extends TwoPhaseCommit(vertx, address, database, timeout, network) {
 
-  private val states: mutable.Map[String, ProtocolState] = new mutable.HashMap[String, ProtocolState]()
 
-    override def requestTransaction(transaction: Transaction): Unit = {
-      val numberOfCohorts = network.size - 1
-
-      var numberOfCommits = 0
-      var numberOfPreCommits = 0
-      var numberOfCommitAcks = 0
-      var numberOfAbortAcks = 0
-      var abortFlag = false
-
-      states += ((transaction.id, ProtocolState.INITIAL))
-      performTransaction(transaction)
-
-      sendToCohortExpectingReply(PrepareTransactionMessage(address, transaction), (response: AsyncResult[Message[Buffer]]) => {
-        if (response.succeeded()) {
-          response.result().body().toJsonObject.mapTo(classOf[ProtocolMessage]) match {
-
-            case VoteCommitMessage(sender, transactionId, _) =>
-              numberOfCommits += 1
-              if (numberOfCommits == numberOfCohorts) {
-                states += ((transactionId, ProtocolState.PRECOMMIT))
-                sendToCohortExpectingReply(GlobalPreCommitMessage(address, transactionId), (response: AsyncResult[Message[Buffer]]) => {
-                  if (response.succeeded()) {
-                    response.result().body().toJsonObject.mapTo(classOf[ProtocolMessage]) match {
-
-                      case GlobalPreCommitAckMessage(sender, transactionId, _) =>
-                        numberOfPreCommits += 1
-                        if (numberOfPreCommits == numberOfCohorts) {
-                          states += ((transactionId, ProtocolState.COMMIT))
-                          sendToCohortExpectingReply(GlobalCommitMessage(address, transactionId), (response: AsyncResult[Message[Buffer]]) => {
-                            if (response.succeeded()) {
-                              response.result().body().toJsonObject.mapTo(classOf[ProtocolMessage]) match {
-
-                                case GlobalCommitAckMessage(sender, transactionId, _) =>
-                                  numberOfCommitAcks += 1
-                                  if (numberOfCommitAcks == numberOfCohorts) {
-                                    states += ((transactionId, ProtocolState.CLOSED))
-                                    println("Coordinator done.")
-                                  }
-                              }
-                            }
-                            else if (response.failed()) {
-                              abortFlag = true
-                              println("Commit acknowledgement failed.")
-                            }
-                          })
-                        }
-
-                    }
-                  }
-                })
-              }
-
-            case VoteAbortMessage(sender, transactionId, _) =>
-              abortFlag = true
-              println("Commit aborted.")
-          }
-        }
-        else if (response.failed()) {
-          abortFlag = true
-          println("Initiate commit failed.")
-        }
-      })
-
-      if (abortFlag) {
-        println("there")
-        states += ((transaction.id, ProtocolState.ABORT))
-        sendToCohortExpectingReply(GlobalAbortMessage(address, transaction.id), (response: AsyncResult[Message[Buffer]]) => {
-          if (response.succeeded()) {
-            response.result().body().toJsonObject.mapTo(classOf[ProtocolMessage]) match {
-
-              case GlobalAbortAckMessage(sender, transactionId, _) =>
-                numberOfAbortAcks += 1
-                if (numberOfAbortAcks == numberOfCohorts) {
-                  states += ((transactionId, ProtocolState.CLOSED))
-                  println("Coordinator abort.")
-                }
-            }
-          }
-        })
-      }
-
+    /**
+     * Message has come in from one of the other cohorts.
+     * This function decides which function should handle it.
+     * Both supervisor- and supervised- targeted messages will come in,
+     * meaning in some messages the agent should act as supervisor,
+     * and in other messages as supervised.
+     *
+     * @param message raw message received.
+     * @param protocolMessage parsed message, matched to one of its subclasses.
+     */
+    override def handleProtocolMessage(message: Message[Buffer], protocolMessage: ProtocolMessage): Unit = protocolMessage match {
+      case TransactionPrepareRequest(sender, _, transaction, _) => handlePrepareRequest(message, sender, transaction)
+      case TransactionAbortResponse(sender, id, _) => handleAbortResponse(message, sender, id)
+      case TransactionCommitRequest(sender, id, _) => handleCommitRequest(message, sender, id)
+      case TransactionPreCommitRequest(sender, id, _) => handlePreCommitRequest(message, sender, id)
     }
 
-    override def handleProtocolMessage(message: Message[Buffer], protocolMessage: ProtocolMessage): Unit = {
-      protocolMessage match {
-        case PrepareTransactionMessage(sender, transaction, _) =>
-          states += ((transaction.id, ProtocolState.INITIAL))
-          try {
-            states += ((transaction.id, ProtocolState.READY))
-            performTransaction(transaction)
-            message.reply(Json.encodeToBuffer(VoteCommitMessage(address, transaction.id)))
-          } catch {
-            case _ =>
-              states += ((transaction.id, ProtocolState.ABORT))
-              message.reply(Json.encodeToBuffer(VoteAbortMessage(address, transaction.id)))
+    /**
+     * Handles the case that a READY package was sent to this agent.
+     * Function only acts on this if this agent thinks it is the supervisor for this transaction.
+     * If the number of READY's received from distinct senders
+     * is equal to the number of agents in the network, this supervisor will commit.
+     *
+     * @param message raw form of the message that was sent. Used to directly reply.
+     * @param sender the network address of the sender of this message.
+     * @param id the id of the transaction the sender sent READY for.
+     */
+    override def handleReadyResponse(message: Message[Buffer], sender: String, id: String): Unit = {
+      if (!stateManager.stateExists(id)) {
+        // Probably supervised this earlier but was deleted due to an abort
+        return
+      }
+
+      // Check if this agent is the supervising entity.
+      // If not, drop this request and do not respond.
+      if (stateManager.getSupervisor(id) != address) {
+        return
+      }
+
+      stateManager.getState(id) match {
+        case ReceivingReadyState(_, confirmedAddresses) =>
+          confirmedAddresses += sender
+
+          // TODO check if network.size is in- or excluding this node
+          if (confirmedAddresses.size < network.size) {
+            stateManager.updateState(id, ReceivingReadyState(id, confirmedAddresses))
+            return
           }
 
-        case GlobalPreCommitMessage(sender, transactionId, _) =>
-          states += ((transactionId, ProtocolState.PRECOMMIT))
-          message.reply(Json.encodeToBuffer(GlobalPreCommitAckMessage(address, transactionId)))
-
-
-        case GlobalCommitMessage(sender, transactionId, _) =>
-          states += ((transactionId, ProtocolState.COMMIT))
-          message.reply(Json.encodeToBuffer(GlobalCommitAckMessage(address, transactionId)))
-          println("Cohort done.")
-
-        case GlobalAbortMessage(sender, transactionId, _) =>
-          states += ((transactionId, ProtocolState.ABORT))
-          println("here")
-          // TODO revert possibly already performed transactions
-          message.reply(Json.encodeToBuffer(GlobalAbortAckMessage(address, transactionId)))
-          println("Cohort abort.")
+          // Global decision has been made, transfer precommit decision to all cohorts
+          preCommitTransaction(id)
 
         case _ =>
-          println("Unexpected message:")
-          println(message.body())
+        // A READY was received by the supervisor, but the supervisor is not expecting it.
+        // Drop the package.
+        // TODO log that a wrong package was received
       }
     }
+
+
+    def preCommitTransaction(id: String): Unit = {
+      // In this case this node is the supervisor
+      if (stateManager.stateExists(id)) {
+        // TODO perhaps do something with the old transaction? Queue?
+      }
+
+      stateManager.updateState(id, ReceivingPrecommitState(id, mutable.HashSet()))
+      sendToCohortExpectingReply(TransactionPreCommitRequest(address, id), reply => {
+        if (reply.succeeded()) {
+          reply.result().body().toJsonObject.mapTo(classOf[ProtocolMessage]) match {
+            case TransactionPreCommitResponse(sender, id, _) => handlePreCommitResponse(reply.result(), sender, id)
+            case _ => // TODO ABORT
+          }
+        } else {
+          // TODO Time-out or other failure
+        }
+      })
+    }
+
+    def handlePreCommitResponse(message: Message[Buffer], sender: String, id: String): Unit = {
+      if (!stateManager.stateExists(id)) {
+        // Probably supervised this earlier but was deleted due to an abort
+        return
+      }
+
+      // Check if this agent is the supervising entity.
+      // If not, drop this request and do not respond.
+      if (stateManager.getSupervisor(id) != address) {
+        return
+      }
+
+      stateManager.getState(id) match {
+        case ReceivingPrecommitState(_, confirmedAddresses) =>
+          confirmedAddresses += sender
+
+          if (confirmedAddresses.size < network.size) {
+            stateManager.updateState(id, ReceivingPrecommitState(id, confirmedAddresses))
+            return
+          }
+
+          // Global decision has been made, transfer commit decision to all cohorts
+          commitTransaction(id)
+        case _ =>
+        // A READY was received by the supervisor, but the supervisor is not expecting it.
+        // Drop the package.
+        // TODO log that a wrong package was received
+
+      }
+    }
+
+    /**
+     * Handle precommitting of a transaction to the database.
+     * If this message is from the supervisor, repeat the message to everyone
+     * and update the database.
+     *
+     * @param message raw form of the message that was sent. Used to directly reply.
+     * @param sender the sender of the commit request.
+     * @param id the id of the transaction the commit was about.
+     */
+    def handlePreCommitRequest(message: Message[Buffer], sender: String, id: String): Unit = {
+      if (!stateManager.stateExists(id)) {
+        // No state with this id, so do not respond.
+        //TODO log that a malicious package was found
+        return
+      }
+
+      val state = stateManager.getState(id)
+      if (state != ReadyState(id)) {
+        // This state is not yet in the ready state.
+        //TODO log that a malicious package was found.
+        return
+      }
+
+      val supervisor = stateManager.getSupervisor(id)
+      if (supervisor == sender && supervisor != address) {
+        message.reply(TransactionPreCommitResponse(address, id))
+      }
+    }
+
+
 
   }

@@ -44,22 +44,8 @@ object ProtocolState extends Enumeration {
   new Type(value = classOf[TransactionReadyResponse], name = "request.prepare"),
   new Type(value = classOf[TransactionAbortResponse], name = "request.abort"),
   new Type(value = classOf[TransactionCommitRequest], name = "request.commit"),
-  new Type(value = classOf[PerformTransactionMessage], name = "protocol.example"),
-  new Type(value = classOf[PrepareTransactionMessage], name = "protocol.twophasecommit.prepare"),
-  new Type(value = classOf[VoteCommitMessage], name = "protocol.twophasecommit.votecommit"),
-  new Type(value = classOf[VoteAbortMessage], name = "protocol.twophasecommit.voteabort"),
-  new Type(value = classOf[GlobalCommitMessage], name = "protocol.twophasecommit.globalcommit"),
-  new Type(value = classOf[GlobalAbortMessage], name = "protocol.twophasecommit.globalabort"),
-  new Type(value = classOf[GlobalCommitAckMessage], name = "protocol.twophasecommit.globalcommitack"),
-  new Type(value = classOf[GlobalAbortAckMessage], name = "protocol.twophasecommit.globalabortack"),
-  new Type(value = classOf[VoteCommitMessage], name = "protocol.threephasecommit.votecommit"),
-  new Type(value = classOf[VoteAbortMessage], name = "protocol.threephasecommit.voteabort"),
-  new Type(value = classOf[GlobalCommitMessage], name = "protocol.threephasecommit.globalcommit"),
-  new Type(value = classOf[GlobalAbortMessage], name = "protocol.threephasecommit.globalabort"),
-  new Type(value = classOf[GlobalCommitAckMessage], name = "protocol.threephasecommit.globalcommitack"),
-  new Type(value = classOf[GlobalAbortAckMessage], name = "protocol.threephasecommit.globalabortack"),
-  new Type(value = classOf[GlobalPreCommitMessage], name = "protocol.threephasecommit.globalprecommit"),
-  new Type(value = classOf[GlobalPreCommitAckMessage], name = "protocol.threephasecommit.globalprecommitack"),
+  new Type(value = classOf[TransactionPreCommitRequest], name = "request.precommit"),
+  new Type(value = classOf[TransactionPreCommitResponse], name = "response.precommit"),
 ))
 trait ProtocolMessage {
   def sender: String
@@ -135,9 +121,9 @@ abstract class Protocol(
     eventBus.send(address, Json.encodeToBuffer(messageToSend))
   }
 
-  abstract def requestTransaction(transaction: Transaction)
+  def requestTransaction(transaction: Transaction)
 
-  abstract def handleProtocolMessage(message: Message[Buffer], protocolMessage: ProtocolMessage)
+  def handleProtocolMessage(message: Message[Buffer], protocolMessage: ProtocolMessage)
 
   def onMessageReceived(message: Message[Buffer], protocolMessage: ProtocolMessage): Unit = {
     (protocolMessage, message.replyAddress()) match {
