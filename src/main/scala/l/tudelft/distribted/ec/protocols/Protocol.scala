@@ -35,7 +35,6 @@ object NetworkState extends Enumeration {
 @JsonSubTypes(Array(
   new Type(value = classOf[RequestNetwork], name = "request.network"),
   new Type(value = classOf[RespondNetwork], name = "response.network"),
-  new Type(value = classOf[PerformTransactionMessage], name = "protocol.example"),
   new Type(value = classOf[TransactionPrepareRequest], name = "request.prepare"),
   new Type(value = classOf[TransactionReadyResponse], name = "request.prepare"),
   new Type(value = classOf[TransactionAbortResponse], name = "request.abort"),
@@ -85,13 +84,7 @@ abstract class Protocol(
 
     // perform a heart beat every second
     vertx.setPeriodic(1000L, _ => {
-      sendToCohortExpectingReply(RequestNetwork(address, network(address)), (response: AsyncResult[Message[Buffer]]) => {
-        if (response.succeeded()) {
-          response.result().body().toJsonObject.mapTo(classOf[RespondNetwork]) match {
-            case RespondNetwork(sender, state, _) => network.put(sender, state)
-          }
-        }
-      })
+      sendToCohort(RequestNetwork(address, network(address)))
     })
   }
 
@@ -104,11 +97,13 @@ abstract class Protocol(
 
 
   def sendToCohortExpectingReply[T](messageToSend: ProtocolMessage, handler: Handler[AsyncResult[Message[Buffer]]]): Unit = {
-    eventBus.send(COMMIT_PROTOCOL_ADDRESS, Json.encodeToBuffer(messageToSend), deliveryOptions, handler)
+    network.keySet.filter(cohort => cohort != address).foreach(cohort => {
+      eventBus.send(cohort, Json.encodeToBuffer(messageToSend), deliveryOptions, handler)
+    })
   }
 
   def sendToCohort(messageToSend: ProtocolMessage): Unit = {
-    eventBus.send(COMMIT_PROTOCOL_ADDRESS, Json.encodeToBuffer(messageToSend))
+    eventBus.publish(COMMIT_PROTOCOL_ADDRESS, Json.encodeToBuffer(messageToSend))
   }
 
   def replyToMessage(message: Message[Buffer], messageToSend: ProtocolMessage): Unit = {
@@ -125,8 +120,7 @@ abstract class Protocol(
 
   def onMessageReceived(message: Message[Buffer], protocolMessage: ProtocolMessage): Unit = {
     (protocolMessage, message.replyAddress()) match {
-      case (RequestNetwork(sender, state, _), Some(_)) =>
-        message.reply(Json.encodeToBuffer(RespondNetwork(address, network(address))))
+      case (RequestNetwork(sender, state, _), None) =>
         network.put(sender, state)
       case _ => handleProtocolMessage(message, protocolMessage)
     }
