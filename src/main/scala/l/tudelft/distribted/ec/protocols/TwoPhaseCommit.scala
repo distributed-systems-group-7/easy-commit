@@ -11,20 +11,6 @@ import scala.collection.mutable
 
 abstract case class SupervisorState() extends Transaction
 
-// State of supervisor in which it is counting how many agents agreed with the transaction.
-case class ReceivingReadyState(id: String, receivedAddresses: mutable.HashSet[String]) extends Transaction
-
-// State of cohort after receiving a PREPARE message and deciding to be ready
-case class ReadyState(id: String) extends Transaction
-
-// State of cohort or supervisor after having decided what should be done
-case class CommitDecidedState(id: String) extends Transaction
-case class AbortDecidedState(id: String) extends Transaction
-
-// State of cohort or supervisor after having done what was decided
-case class CommittedState(id: String) extends Transaction
-case class AbortedState(id: String) extends Transaction
-
 //TODO add timeouts
 abstract class TwoPhaseCommit (
                           private val vertx: Vertx,
@@ -49,8 +35,13 @@ abstract class TwoPhaseCommit (
       // TODO perhaps do something with the old transaction? Queue?
     }
 
-    stateManager.createState(transaction.id, address, ReceivingReadyState(transaction.id, mutable.HashSet()))
-    sendToCohortExpectingReply(TransactionPrepareRequest(address, transaction.id), reply => {
+    if (!transactionPossible(transaction)) {
+      // TODO log.
+      return
+    }
+
+    stateManager.createState(transaction, address, ReceivingReadyState(transaction.id, mutable.HashSet()))
+    sendToCohortExpectingReply(TransactionPrepareRequest(address,transaction.id, transaction, `type` = ???), reply => {
       if (reply.succeeded()) {
         reply.result().body().toJsonObject.mapTo(classOf[ProtocolMessage]) match {
           case TransactionReadyResponse(sender, id, _) => handleReadyResponse(reply.result(), sender, id)
@@ -74,7 +65,7 @@ abstract class TwoPhaseCommit (
    * @param protocolMessage parsed message, matched to one of its subclasses.
    */
   override def handleProtocolMessage(message: Message[Buffer], protocolMessage: ProtocolMessage): Unit = protocolMessage match {
-    case TransactionPrepareRequest(sender, id, _) => handlePrepareRequest(message, sender, id)
+    case TransactionPrepareRequest(sender, _, transaction, _) => handlePrepareRequest(message, sender, transaction)
     case TransactionAbortResponse(sender, id, _) => handleAbortResponse(message, sender, id)
     case TransactionCommitRequest(sender, id, _) => handleCommitRequest(message, sender, id)
   }
@@ -82,10 +73,13 @@ abstract class TwoPhaseCommit (
   /**
    * A supervisor has asked this agent to prepare for a request.
    * Report back to the supervisor if this is possible.
-   * @param sender the network address of the sender of this message.
-   * @param id the id of the transaction to prepare for.
+   *
+   * @param message raw form of the message that was sent.
+   * @param sender the network address of the sender of the message.
+   * @param transaction the transaction to prepare for.
    */
-  def handlePrepareRequest(message: Message[Buffer], sender: String, id: String): Unit = {
+  def handlePrepareRequest(message: Message[Buffer], sender: String, transaction: Transaction): Unit = {
+    val id = transaction.id
     if (stateManager.stateExists(id)) {
       val supervisor = stateManager.getSupervisor(id)
       if (sender != supervisor) {
@@ -98,14 +92,12 @@ abstract class TwoPhaseCommit (
       }
     }
 
-    //TODO check if this change is possible
-    val ready = true
-    if (ready) {
+    if (transactionPossible(transaction)) {
       // Remember the READY response is being sent to the supervisor
-      stateManager.createState(id, sender, ReadyState(id))
+      stateManager.createState(transaction, sender, ReadyState(id))
       replyToMessage(message, TransactionReadyResponse(sender, id))
     } else {
-      stateManager.createState(id, sender, AbortedState(id))
+      stateManager.createState(transaction, sender, AbortedState(id))
       replyToMessage(message, TransactionAbortResponse(address, id))
     }
   }
@@ -116,6 +108,7 @@ abstract class TwoPhaseCommit (
    * If the number of READY's received from distinct senders
    * is equal to the number of agents in the network, this supervisor will commit.
    *
+   * @param message raw form of the message that was sent. Used to directly reply.
    * @param sender the network address of the sender of this message.
    * @param id the id of the transaction the sender sent READY for.
    */
@@ -155,6 +148,7 @@ abstract class TwoPhaseCommit (
    * Function only acts when this agent is the supervisor of the transaction,
    * or when the message is from the supervisor of this transaction.
    *
+   * @param message raw form of the message that was sent. Used to directly reply.
    * @param sender the sender of the ABORT message.
    * @param id the transaction the ABORT message was sent about.
    */
@@ -178,6 +172,7 @@ abstract class TwoPhaseCommit (
    * If this message is from the supervisor, repeat the message to everyone
    * and update the database.
    *
+   * @param message raw form of the message that was sent. Used to directly reply.
    * @param sender the sender of the commit request.
    * @param id the id of the transaction the commit was about.
    */
@@ -203,17 +198,24 @@ abstract class TwoPhaseCommit (
 
   /**
    * Commit the transaction to the database.
+   * First remember the decision to commit, then commit,
+   * then remember the commit was finished.
    *
    * @param id the id of the transaction to commit.
    */
   def commitTransaction(id: String): Unit = {
     stateManager.updateState(id, CommitDecidedState(id))
-    //TODO commit the DB change
+    stateManager.getTransaction(id) match {
+      case RemoveDataTransaction(_, keyToRemove, _) => database.remove(keyToRemove)
+      case StoreDataTransaction(_, keyToStore, data, _) => database.store(keyToStore, data)
+    }
     stateManager.updateState(id, CommittedState(id))
   }
 
   /**
    * Abort the transaction.
+   * First remember the decision to abort, then abort,
+   * then remember the abort was finished.
    *
    * @param id the id of the transaction to abort.
    */
@@ -222,5 +224,15 @@ abstract class TwoPhaseCommit (
     stateManager.updateState(id, AbortDecidedState(id))
     // TODO abort the transaction in the DB
     stateManager.updateState(id, AbortedState(id))
+  }
+
+  /**
+   * Check if the current transaction can be executed.
+   *
+   * @param transaction the transaction to execute.
+   */
+  def transactionPossible(transaction: Transaction): Boolean = transaction match {
+    case RemoveDataTransaction(_, keyToRemove, _) => database.retrieve(keyToRemove).isDefined
+    case StoreDataTransaction(_, _, _, _) => true
   }
 }

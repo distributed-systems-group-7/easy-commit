@@ -51,7 +51,7 @@ case class RequestNetwork(sender: String, state: NetworkState, `type`: String = 
 
 case class RespondNetwork(sender: String, state: NetworkState, `type`: String = "response.network") extends ProtocolMessage
 
-case class TransactionPrepareRequest(sender: String, id: String, `type`: String = "request.prepare") extends ProtocolMessage
+case class TransactionPrepareRequest(sender: String, id: String, transaction: Transaction, `type`: String = "request.prepare") extends ProtocolMessage
 
 case class TransactionReadyResponse(sender: String, id: String, `type`: String = "response.prepare") extends ProtocolMessage
 
@@ -114,9 +114,9 @@ abstract class Protocol(
     eventBus.send(address, Json.encodeToBuffer(messageToSend))
   }
 
-  def requestTransaction(transaction: Transaction)
+  abstract def requestTransaction(transaction: Transaction)
 
-  def handleProtocolMessage(message: Message[Buffer], protocolMessage: ProtocolMessage)
+  abstract def handleProtocolMessage(message: Message[Buffer], protocolMessage: ProtocolMessage)
 
   def onMessageReceived(message: Message[Buffer], protocolMessage: ProtocolMessage): Unit = {
     (protocolMessage, message.replyAddress()) match {
