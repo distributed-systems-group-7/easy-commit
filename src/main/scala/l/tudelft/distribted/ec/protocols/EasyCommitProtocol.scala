@@ -12,16 +12,12 @@ import scala.collection.mutable
  * @param vertx the message bus over which to communicate.
  * @param address the network address of this agent.
  * @param database the database on which to execute the transactions.
- * @param timeout the timeout of no response of a cohort or supervisor.
- * @param network state mapping of how reachable the network is.
  */
 class EasyCommitProtocol(
     private val vertx: Vertx,
     private val address: String,
     private val database: HashMapDatabase,
-    private val timeout: Long = 5000L,
-    private val network: mutable.Map[String, NetworkState] = new mutable.HashMap[String, NetworkState]()
-  ) extends TwoPhaseCommit(vertx, address, database, timeout, network) {
+  ) extends TwoPhaseCommit(vertx, address, database) {
 
 
   /**
@@ -33,7 +29,7 @@ class EasyCommitProtocol(
     // Update everyone else, and commit to DB.
     stateManager.updateState(id, CommitDecidedState(id))
     sendToCohort(TransactionCommitRequest(address, id))
-    //TODO commit the DB change
+    performTransaction(stateManager.getTransaction(id))
     stateManager.updateState(id, CommittedState(id))
   }
 
@@ -45,9 +41,13 @@ class EasyCommitProtocol(
    */
   override def abortTransaction(id: String): Unit = {
     // Update everyone else, and stop tracking this.
-    stateManager.updateState(id, AbortDecidedState(id))
-    sendToCohort(TransactionAbortResponse(address, id))
-    // TODO abort the transaction in the DB
-    stateManager.updateState(id, AbortedState(id))
+    (stateManager.getState(id)) match {
+      case AbortedState(_) =>
+      case _ =>
+        stateManager.updateState(id, AbortDecidedState(id))
+        sendToCohort(TransactionAbortResponse(address, id))
+        revertTransaction(stateManager.getTransaction(id))
+        stateManager.updateState(id, AbortedState(id))
+    }
   }
 }

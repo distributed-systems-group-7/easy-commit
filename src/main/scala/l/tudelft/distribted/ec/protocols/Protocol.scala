@@ -29,14 +29,15 @@ case class StoreDataTransaction(id: String, keyToStore: String, data: java.util.
 object NetworkState extends Enumeration {
   type NetworkState = Value
   val READY: protocols.NetworkState.Value = Value
+  val DOWN: protocols.NetworkState.Value = Value
 }
 
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
 @JsonSubTypes(Array(
   new Type(value = classOf[RequestNetwork], name = "request.network"),
   new Type(value = classOf[TransactionPrepareRequest], name = "request.prepare"),
-  new Type(value = classOf[TransactionReadyResponse], name = "request.prepare"),
-  new Type(value = classOf[TransactionAbortResponse], name = "request.abort"),
+  new Type(value = classOf[TransactionReadyResponse], name = "response.prepare"),
+  new Type(value = classOf[TransactionAbortResponse], name = "response.abort"),
   new Type(value = classOf[TransactionCommitRequest], name = "request.commit"),
 ))
 trait ProtocolMessage {
@@ -45,8 +46,6 @@ trait ProtocolMessage {
   def `type`: String
 }
 
-
-case class RequestNetwork(sender: String, state: NetworkState, `type`: String = "request.network") extends ProtocolMessage
 
 case class TransactionPrepareRequest(sender: String, id: String, transaction: Transaction, `type`: String = "request.prepare") extends ProtocolMessage
 
@@ -61,7 +60,7 @@ abstract class Protocol(
                          private val address: String,
                          private val database: HashMapDatabase,
                        ) {
-  private val network: NetworkingHandler = new NetworkingHandler(vertx, address)
+  protected val network: NetworkingHandler = new NetworkingHandler(vertx, address)
 
   def listen(): Unit = {
     network.listen()
@@ -77,6 +76,12 @@ abstract class Protocol(
     }
   }
 
+  def revertTransaction(transaction: Transaction): Unit = {
+    transaction match {
+      case StoreDataTransaction(_, key, data, _) => database.remove(key)
+      case RemoveDataTransaction(_, key, _) => database.remove(key)
+    }
+  }
 
   def sendToCohortExpectingReply[T](messageToSend: ProtocolMessage, handler: Handler[AsyncResult[Message[Buffer]]]): Unit = {
     network.sendToCohortExpectingReply(messageToSend, handler)
@@ -87,16 +92,14 @@ abstract class Protocol(
   }
 
   def replyToMessage(message: Message[Buffer], messageToSend: ProtocolMessage): Unit = {
-    message.reply(Json.encode(messageToSend))
+    message.reply(Json.encodeToBuffer(messageToSend))
   }
 
   def sendToAddress(address: String, messageToSend: ProtocolMessage): Unit = {
-    eventBus.send(address, Json.encodeToBuffer(messageToSend))
+    vertx.eventBus().send(address, Json.encodeToBuffer(messageToSend))
   }
 
-  abstract def requestTransaction(transaction: Transaction)
-
-  abstract def handleProtocolMessage(message: Message[Buffer], protocolMessage: ProtocolMessage)
+  def requestTransaction(transaction: Transaction)
 
   def handleProtocolMessage(message: Message[Buffer], protocolMessage: ProtocolMessage)
 }

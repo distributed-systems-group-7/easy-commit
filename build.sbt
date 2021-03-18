@@ -6,6 +6,7 @@ scalaVersion := "2.12.8"
 libraryDependencies ++= Vector (
   Library.vertx_lang_scala,
   Library.vertx_web,
+  Library.vertx_web_client,
   Library.scalaTest       % "test",
   // Uncomment for clustering
   // Library.vertx_hazelcast,

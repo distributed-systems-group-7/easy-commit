@@ -1,10 +1,10 @@
 package l.tudelft.distribted.ec.protocols
 
+import io.vertx.core.AsyncResult
 import io.vertx.core.buffer.Buffer
 import io.vertx.scala.core.Vertx
 import io.vertx.scala.core.eventbus.Message
 import l.tudelft.distribted.ec.HashMapDatabase
-import l.tudelft.distribted.ec.protocols.NetworkState.NetworkState
 
 import scala.collection.mutable
 
@@ -12,13 +12,11 @@ import scala.collection.mutable
 abstract case class SupervisorState() extends Transaction
 
 //TODO add timeouts
-abstract class TwoPhaseCommit (
-                          private val vertx: Vertx,
-                          private val address: String,
-                          private val database: HashMapDatabase,
-                          private val timeout: Long = 5000L,
-                          private val network: mutable.Map[String, NetworkState] = new mutable.HashMap[String, NetworkState]()
-                        ) extends Protocol(vertx, address, database, timeout, network) {
+abstract class TwoPhaseCommit(
+                               private val vertx: Vertx,
+                               private val address: String,
+                               private val database: HashMapDatabase,
+                             ) extends Protocol(vertx, address, database) {
 
   protected val stateManager = new TransactionStateManager(address)
 
@@ -26,8 +24,9 @@ abstract class TwoPhaseCommit (
    * Transaction is requested by an external party.
    * This agent will act as the supervisor for this transaction.
    * First step is to send to all cohorts to prepare, next step is handled by `handleProtocolMessage`
+   *
    * @param transaction the transaction to carry out.
-   * TODO how is the transaction ID generated?
+   *                    TODO how is the transaction ID generated?
    */
   override def requestTransaction(transaction: Transaction): Unit = {
     // In this case this node is the supervisor
@@ -40,16 +39,17 @@ abstract class TwoPhaseCommit (
       return
     }
 
-    stateManager.createState(transaction, address, ReceivingReadyState(transaction.id, mutable.HashSet()))
-    sendToCohortExpectingReply(TransactionPrepareRequest(address,transaction.id, transaction, `type` = ???), reply => {
+    stateManager.createState(transaction, address, ReceivingReadyState(transaction.id, mutable.HashSet(address)))
+    sendToCohortExpectingReply(TransactionPrepareRequest(address, transaction.id, transaction), (reply: AsyncResult[Message[Buffer]]) => {
       if (reply.succeeded()) {
         reply.result().body().toJsonObject.mapTo(classOf[ProtocolMessage]) match {
           case TransactionReadyResponse(sender, id, _) => handleReadyResponse(reply.result(), sender, id)
           case TransactionAbortResponse(sender, id, _) => handleAbortResponse(reply.result(), sender, id)
-          case _ => // TODO ABORT
+          case _ =>
+            abortTransaction(transaction.id)
         }
       } else {
-        // TODO Time-out or other failure
+        abortTransaction(transaction.id)
       }
     })
   }
@@ -61,7 +61,7 @@ abstract class TwoPhaseCommit (
    * meaning in some messages the agent should act as supervisor,
    * and in other messages as supervised.
    *
-   * @param message raw message received.
+   * @param message         raw message received.
    * @param protocolMessage parsed message, matched to one of its subclasses.
    */
   override def handleProtocolMessage(message: Message[Buffer], protocolMessage: ProtocolMessage): Unit = protocolMessage match {
@@ -74,8 +74,8 @@ abstract class TwoPhaseCommit (
    * A supervisor has asked this agent to prepare for a request.
    * Report back to the supervisor if this is possible.
    *
-   * @param message raw form of the message that was sent.
-   * @param sender the network address of the sender of the message.
+   * @param message     raw form of the message that was sent.
+   * @param sender      the network address of the sender of the message.
    * @param transaction the transaction to prepare for.
    */
   def handlePrepareRequest(message: Message[Buffer], sender: String, transaction: Transaction): Unit = {
@@ -95,7 +95,7 @@ abstract class TwoPhaseCommit (
     if (transactionPossible(transaction)) {
       // Remember the READY response is being sent to the supervisor
       stateManager.createState(transaction, sender, ReadyState(id))
-      replyToMessage(message, TransactionReadyResponse(sender, id))
+      replyToMessage(message, TransactionReadyResponse(address, id))
     } else {
       stateManager.createState(transaction, sender, AbortedState(id))
       replyToMessage(message, TransactionAbortResponse(address, id))
@@ -109,8 +109,8 @@ abstract class TwoPhaseCommit (
    * is equal to the number of agents in the network, this supervisor will commit.
    *
    * @param message raw form of the message that was sent. Used to directly reply.
-   * @param sender the network address of the sender of this message.
-   * @param id the id of the transaction the sender sent READY for.
+   * @param sender  the network address of the sender of this message.
+   * @param id      the id of the transaction the sender sent READY for.
    */
   def handleReadyResponse(message: Message[Buffer], sender: String, id: String): Unit = {
     if (!stateManager.stateExists(id)) {
@@ -149,8 +149,8 @@ abstract class TwoPhaseCommit (
    * or when the message is from the supervisor of this transaction.
    *
    * @param message raw form of the message that was sent. Used to directly reply.
-   * @param sender the sender of the ABORT message.
-   * @param id the transaction the ABORT message was sent about.
+   * @param sender  the sender of the ABORT message.
+   * @param id      the transaction the ABORT message was sent about.
    */
   def handleAbortResponse(message: Message[Buffer], sender: String, id: String): Unit = {
     if (!stateManager.stateExists(id)) {
@@ -173,8 +173,8 @@ abstract class TwoPhaseCommit (
    * and update the database.
    *
    * @param message raw form of the message that was sent. Used to directly reply.
-   * @param sender the sender of the commit request.
-   * @param id the id of the transaction the commit was about.
+   * @param sender  the sender of the commit request.
+   * @param id      the id of the transaction the commit was about.
    */
   def handleCommitRequest(message: Message[Buffer], sender: String, id: String): Unit = {
     if (!stateManager.stateExists(id)) {

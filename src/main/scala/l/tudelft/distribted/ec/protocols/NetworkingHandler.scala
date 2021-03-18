@@ -28,6 +28,13 @@ class NetworkingHandler(val vertx: Vertx, val address: String, val listenOnly : 
 
 
   /**
+   * Computes the size of the network
+   *
+   * @return the size of the network
+   */
+  def size(): Int = network.size
+
+  /**
    * Starts listening for network changes and keeps tracking of other cohorts.
    *
    * If listenOnly is false then we will also broadcast this verticle to the cohorts.
@@ -55,7 +62,7 @@ class NetworkingHandler(val vertx: Vertx, val address: String, val listenOnly : 
    *
    * @return the list of cohorts excluding this network handler.
    */
-  def cohort: collection.Set[String] = {
+  def cohort(): collection.Set[String] = {
     network.keySet.filter(cohort => cohort != address)
   }
 
@@ -69,7 +76,7 @@ class NetworkingHandler(val vertx: Vertx, val address: String, val listenOnly : 
    * @tparam T the type of the message to reply
    */
   def sendToCohortExpectingReply[T](messageToSend: ProtocolMessage, handler: Handler[AsyncResult[Message[Buffer]]]): Unit = {
-    cohort.foreach(cohort => {
+    cohort().foreach(cohort => {
       vertx.eventBus().send(cohort, Json.encodeToBuffer(messageToSend), deliveryOptions, handler)
     })
   }
