@@ -36,8 +36,10 @@ object NetworkState extends Enumeration {
   new Type(value = classOf[RequestNetwork], name = "request.network"),
   new Type(value = classOf[RespondNetwork], name = "response.network"),
   new Type(value = classOf[TransactionPrepareRequest], name = "request.prepare"),
-  new Type(value = classOf[TransactionReadyResponse], name = "request.prepare"),
+  new Type(value = classOf[TransactionReadyResponse], name = "request.ready"),
   new Type(value = classOf[TransactionAbortResponse], name = "request.abort"),
+  new Type(value = classOf[TransactionReadyResponse], name = "response.ready"),
+  new Type(value = classOf[TransactionAbortResponse], name = "response.abort"),
   new Type(value = classOf[TransactionCommitRequest], name = "request.commit"),
 ))
 trait ProtocolMessage {
@@ -53,7 +55,7 @@ case class RespondNetwork(sender: String, state: NetworkState, `type`: String = 
 
 case class TransactionPrepareRequest(sender: String, id: String, transaction: Transaction, `type`: String = "request.prepare") extends ProtocolMessage
 
-case class TransactionReadyResponse(sender: String, id: String, `type`: String = "response.prepare") extends ProtocolMessage
+case class TransactionReadyResponse(sender: String, id: String, `type`: String = "response.ready") extends ProtocolMessage
 
 case class TransactionAbortResponse(sender: String, id: String, `type`: String = "response.abort") extends ProtocolMessage
 
