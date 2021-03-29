@@ -29,16 +29,14 @@ case class StoreDataTransaction(id: String, keyToStore: String, data: java.util.
 object NetworkState extends Enumeration {
   type NetworkState = Value
   val READY: protocols.NetworkState.Value = Value
+  val DOWN: protocols.NetworkState.Value = Value
 }
 
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
 @JsonSubTypes(Array(
   new Type(value = classOf[RequestNetwork], name = "request.network"),
-  new Type(value = classOf[RespondNetwork], name = "response.network"),
   new Type(value = classOf[TransactionPrepareRequest], name = "request.prepare"),
   new Type(value = classOf[TransactionReadyResponse], name = "request.ready"),
-  new Type(value = classOf[TransactionAbortResponse], name = "request.abort"),
-  new Type(value = classOf[TransactionReadyResponse], name = "response.ready"),
   new Type(value = classOf[TransactionAbortResponse], name = "response.abort"),
   new Type(value = classOf[TransactionCommitRequest], name = "request.commit"),
 ))
@@ -48,10 +46,6 @@ trait ProtocolMessage {
   def `type`: String
 }
 
-
-case class RequestNetwork(sender: String, state: NetworkState, `type`: String = "request.network") extends ProtocolMessage
-
-case class RespondNetwork(sender: String, state: NetworkState, `type`: String = "response.network") extends ProtocolMessage
 
 case class TransactionPrepareRequest(sender: String, id: String, transaction: Transaction, `type`: String = "request.prepare") extends ProtocolMessage
 
@@ -65,28 +59,13 @@ abstract class Protocol(
                          private val vertx: Vertx,
                          private val address: String,
                          private val database: HashMapDatabase,
-                         private val timeout: Long = 5000L,
-                         private val network: mutable.Map[String, NetworkState] = new mutable.HashMap[String, NetworkState]()
                        ) {
-  private val COMMIT_PROTOCOL_ADDRESS = "commit-protocol"
-  private val deliveryOptions: DeliveryOptions = DeliveryOptions().setSendTimeout(timeout)
-  private val eventBus: EventBus = vertx.eventBus()
-
-  network.put(address, READY)
-
+  protected val network: NetworkingHandler = new NetworkingHandler(vertx, address)
 
   def listen(): Unit = {
-    eventBus.consumer(COMMIT_PROTOCOL_ADDRESS, handler = (message: Message[Buffer]) =>
-      onMessageReceived(message, message.body().toJsonObject.mapTo(classOf[ProtocolMessage]))
-    )
-
-    eventBus.consumer(address, handler = (message: Message[Buffer]) =>
-      onMessageReceived(message, message.body().toJsonObject.mapTo(classOf[ProtocolMessage]))
-    )
-
-    // perform a heart beat every second
-    vertx.setPeriodic(1000L, _ => {
-      sendToCohort(RequestNetwork(address, network(address)))
+    network.listen()
+    vertx.eventBus().consumer(address, handler = (message: Message[Buffer]) => {
+      handleProtocolMessage(message, message.body().toJsonObject.mapTo(classOf[ProtocolMessage]))
     })
   }
 
@@ -97,34 +76,30 @@ abstract class Protocol(
     }
   }
 
+  def revertTransaction(transaction: Transaction): Unit = {
+    transaction match {
+      case StoreDataTransaction(_, key, data, _) => database.remove(key)
+      case RemoveDataTransaction(_, key, _) => database.remove(key)
+    }
+  }
 
   def sendToCohortExpectingReply[T](messageToSend: ProtocolMessage, handler: Handler[AsyncResult[Message[Buffer]]]): Unit = {
-    network.keySet.filter(cohort => cohort != address).foreach(cohort => {
-      eventBus.send(cohort, Json.encodeToBuffer(messageToSend), deliveryOptions, handler)
-    })
+    network.sendToCohortExpectingReply(messageToSend, handler)
   }
 
   def sendToCohort(messageToSend: ProtocolMessage): Unit = {
-    eventBus.publish(COMMIT_PROTOCOL_ADDRESS, Json.encodeToBuffer(messageToSend))
+    network.sendToCohort(messageToSend)
   }
 
   def replyToMessage(message: Message[Buffer], messageToSend: ProtocolMessage): Unit = {
-    message.reply(Json.encode(messageToSend))
+    message.reply(Json.encodeToBuffer(messageToSend))
   }
 
   def sendToAddress(address: String, messageToSend: ProtocolMessage): Unit = {
-    eventBus.send(address, Json.encodeToBuffer(messageToSend))
+    vertx.eventBus().send(address, Json.encodeToBuffer(messageToSend))
   }
 
-  abstract def requestTransaction(transaction: Transaction)
+  def requestTransaction(transaction: Transaction)
 
-  abstract def handleProtocolMessage(message: Message[Buffer], protocolMessage: ProtocolMessage)
-
-  def onMessageReceived(message: Message[Buffer], protocolMessage: ProtocolMessage): Unit = {
-    (protocolMessage, message.replyAddress()) match {
-      case (RequestNetwork(sender, state, _), None) =>
-        network.put(sender, state)
-      case _ => handleProtocolMessage(message, protocolMessage)
-    }
-  }
+  def handleProtocolMessage(message: Message[Buffer], protocolMessage: ProtocolMessage)
 }
