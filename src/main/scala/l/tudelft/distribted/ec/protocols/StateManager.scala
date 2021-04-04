@@ -20,6 +20,9 @@ case class AbortDecidedState(id: String) extends PhaseState
 case class CommittedState(id: String) extends PhaseState
 case class AbortedState(id: String) extends PhaseState
 
+case class PrecommitDecidedState(id: String) extends PhaseState
+case class ReceivingPrecommitState(id: String, receivingAddresses: mutable.HashSet[String]) extends PhaseState
+
 /**
  * Tracks the state and supervisor of each transaction.
  * Makes sure there are no discrepancies between its to fields.

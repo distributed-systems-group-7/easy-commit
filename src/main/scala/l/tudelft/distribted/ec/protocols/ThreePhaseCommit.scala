@@ -7,8 +7,6 @@ import io.vertx.scala.core.Vertx
 import io.vertx.scala.core.eventbus.Message
 import l.tudelft.distribted.ec.HashMapDatabase
 import l.tudelft.distribted.ec.protocols.NetworkState.NetworkState
-import l.tudelft.distribted.ec.protocols.ProtocolState.ProtocolState
-import l.tudelft.distribted.ec.protocols.{PrepareTransactionMessage,VoteCommitMessage,VoteAbortMessage,GlobalCommitMessage,GlobalAbortMessage,GlobalCommitAckMessage,GlobalAbortAckMessage}
 
 import scala.collection.mutable
 
@@ -20,9 +18,7 @@ case class TransactionPreCommitResponse(sender: String, id: String, `type`: Stri
                       private val vertx: Vertx,
                       private val address: String,
                       private val database: HashMapDatabase,
-                      private val timeout: Long = 5000L,
-                      private val network: mutable.Map[String, NetworkState] = new mutable.HashMap[String, NetworkState]()
-                    ) extends TwoPhaseCommit(vertx, address, database, timeout, network) {
+                    ) extends TwoPhaseCommit(vertx, address, database) {
 
 
     /**
@@ -135,13 +131,15 @@ case class TransactionPreCommitResponse(sender: String, id: String, `type`: Stri
         case ReceivingPrecommitState(_, confirmedAddresses) =>
           confirmedAddresses += sender
 
-          if (confirmedAddresses.size < network.size) {
+          if (confirmedAddresses.size < network.size - 1) {
             stateManager.updateState(id, ReceivingPrecommitState(id, confirmedAddresses))
             return
           }
 
           // Global decision has been made, transfer commit decision to all cohorts
+          stateManager.updateState(id, CommittedState(id))
           commitTransaction(id)
+          sendToCohort(TransactionCommitRequest(address, id))
         case _ =>
         // A READY was received by the supervisor, but the supervisor is not expecting it.
         // Drop the package.
@@ -175,7 +173,38 @@ case class TransactionPreCommitResponse(sender: String, id: String, `type`: Stri
 
       val supervisor = stateManager.getSupervisor(id)
       if (supervisor == sender && supervisor != address) {
-        message.reply(TransactionPreCommitResponse(address, id))
+        stateManager.updateState(id, PrecommitDecidedState(id))
+        replyToMessage(message, TransactionPreCommitResponse(address, id))
+      }
+    }
+
+    /**
+     * Handle committing of a transaction to the database.
+     * If this message is from the supervisor, repeat the message to everyone
+     * and update the database.
+     *
+     * @param message raw form of the message that was sent. Used to directly reply.
+     * @param sender  the sender of the commit request.
+     * @param id      the id of the transaction the commit was about.
+     */
+    override def handleCommitRequest(message: Message[Buffer], sender: String, id: String): Unit = {
+      if (!stateManager.stateExists(id)) {
+        // No state with this id, so do not respond.
+        //TODO log that a malicious package was found
+        return
+      }
+
+      val state = stateManager.getState(id)
+      if (state != PrecommitDecidedState(id)) {
+        // This state is not yet in the ready state.
+        //TODO log that a malicious package was found.
+        return
+      }
+
+      val supervisor = stateManager.getSupervisor(id)
+      if (supervisor == sender && supervisor != address) {
+        commitTransaction(id)
+        stateManager.updateState(id, CommittedState(id))
       }
     }
 
