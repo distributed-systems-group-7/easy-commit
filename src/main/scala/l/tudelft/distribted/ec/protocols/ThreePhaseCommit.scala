@@ -92,7 +92,7 @@ case class TransactionPreCommitResponse(sender: String, id: String, `type`: Stri
         // TODO perhaps do something with the old transaction? Queue?
       }
 
-      stateManager.updateState(id, ReceivingPrecommitState(id, mutable.HashSet()))
+      stateManager.updateState(id, ReceivingPrecommitState(id, mutable.HashSet(address)))
       sendToCohortExpectingReply(TransactionPreCommitRequest(address, id), reply => {
         if (reply.succeeded()) {
           reply.result().body().toJsonObject.mapTo(classOf[ProtocolMessage]) match {
@@ -131,7 +131,7 @@ case class TransactionPreCommitResponse(sender: String, id: String, `type`: Stri
         case ReceivingPrecommitState(_, confirmedAddresses) =>
           confirmedAddresses += sender
 
-          if (confirmedAddresses.size < network.size - 1) {
+          if (confirmedAddresses.size < network.size) {
             stateManager.updateState(id, ReceivingPrecommitState(id, confirmedAddresses))
             return
           }
