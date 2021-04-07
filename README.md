@@ -1,8 +1,8 @@
-This is a quickstart for a Vert.x Scala project. It provides a few examples for doing 
-unit-tests.
-
-It comes with `vertx-core` and `vertx-web` so you are good to go for a little REST-project.
-Take your time and take a look.
+# Easy Commit re-implementation
+This is the implementation of the Easy Commit commitment protocol by Group 7 of the Distributed Systems
+course of 2020-2021 at the faculty of EEMCS of the Delft University of Technology.
+This codebase was created to reproduce [this paper](https://openproceedings.org/2018/conf/edbt/paper-65.pdf) 
+by Gupta and Sadoghi.
 
 # Scala console
 
