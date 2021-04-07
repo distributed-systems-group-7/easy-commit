@@ -31,53 +31,8 @@ case class TransactionPreCommitResponse(sender: String, id: String, `type`: Stri
      * @param message raw message received.
      * @param protocolMessage parsed message, matched to one of its subclasses.
      */
-    override def handleProtocolMessage(message: Message[Buffer], protocolMessage: ProtocolMessage): Unit = protocolMessage match {
-      case TransactionPrepareRequest(sender, _, transaction, _) => handlePrepareRequest(message, sender, transaction)
-      case TransactionAbortResponse(sender, id, _) => handleAbortResponse(message, sender, id)
-      case TransactionCommitRequest(sender, id, _) => handleCommitRequest(message, sender, id)
+    override def handleUnrecognizedMessage(message: Message[Buffer], protocolMessage: ProtocolMessage): Unit = protocolMessage match {
       case TransactionPreCommitRequest(sender, id, _) => handlePreCommitRequest(message, sender, id)
-    }
-
-    /**
-     * Handles the case that a READY package was sent to this agent.
-     * Function only acts on this if this agent thinks it is the supervisor for this transaction.
-     * If the number of READY's received from distinct senders
-     * is equal to the number of agents in the network, this supervisor will commit.
-     *
-     * @param message raw form of the message that was sent. Used to directly reply.
-     * @param sender the network address of the sender of this message.
-     * @param id the id of the transaction the sender sent READY for.
-     */
-    override def handleReadyResponse(message: Message[Buffer], sender: String, id: String): Unit = {
-      if (!stateManager.stateExists(id)) {
-        // Probably supervised this earlier but was deleted due to an abort
-        return
-      }
-
-      // Check if this agent is the supervising entity.
-      // If not, drop this request and do not respond.
-      if (stateManager.getSupervisor(id) != address) {
-        return
-      }
-
-      stateManager.getState(id) match {
-        case ReceivingReadyState(_, confirmedAddresses) =>
-          confirmedAddresses += sender
-
-          // TODO check if network.size is in- or excluding this node
-          if (confirmedAddresses.size < network.size) {
-            stateManager.updateState(id, ReceivingReadyState(id, confirmedAddresses))
-            return
-          }
-
-          // Global decision has been made, transfer precommit decision to all cohorts
-          preCommitTransaction(id)
-
-        case _ =>
-        // A READY was received by the supervisor, but the supervisor is not expecting it.
-        // Drop the package.
-        // TODO log that a wrong package was received
-      }
     }
 
     /**
@@ -138,7 +93,7 @@ case class TransactionPreCommitResponse(sender: String, id: String, `type`: Stri
 
           // Global decision has been made, transfer commit decision to all cohorts
           stateManager.updateState(id, CommittedState(id))
-          commitTransaction(id)
+          super.commitTransaction(id)
           sendToCohort(TransactionCommitRequest(address, id))
         case _ =>
         // A READY was received by the supervisor, but the supervisor is not expecting it.
@@ -177,6 +132,8 @@ case class TransactionPreCommitResponse(sender: String, id: String, `type`: Stri
         replyToMessage(message, TransactionPreCommitResponse(address, id))
       }
     }
+
+    override def commitTransaction(id: String): Unit = preCommitTransaction(id)
 
     /**
      * Handle committing of a transaction to the database.
